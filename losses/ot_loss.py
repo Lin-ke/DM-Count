@@ -30,6 +30,7 @@ class OT_Loss(Module):
         loss = torch.zeros([1]).to(self.device)
         ot_obj_values = torch.zeros([1]).to(self.device)
         wd = 0 # wasserstain distance
+        print(points.shape())
         for idx, im_points in enumerate(points):
             if len(im_points) > 0:
                 # compute l2 square distance, it should be source target distance. [#gt, #cood * #cood]
