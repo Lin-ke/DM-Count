@@ -1,0 +1,1 @@
+python train.py --dataset qnrf --data-dir ~/../qinnan/dataset/UCF-Train-Val-Test/ --device 0
