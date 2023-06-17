@@ -1,1 +1,1 @@
-python train.py --dataset qnrf --data-dir /home/home/weiyupeng/home/cv/qnrf --device 0
+python train.py --dataset qnrf --data-dir /home/weiyupeng/qnrf --device 1

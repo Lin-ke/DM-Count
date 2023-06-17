@@ -9,12 +9,13 @@ import numpy as np
 from datetime import datetime
 
 from datasets.crowd import Crowd_qnrf, Crowd_nwpu, Crowd_sh
-from models import vgg19
+from models import vgg19,MLP
+
 from losses.ot_loss import OT_Loss
 from utils.pytorch_utils import Save_Handle, AverageMeter
 import utils.log_utils as log_utils
 
-
+logger = None
 def train_collate(batch):
     transposed_batch = list(zip(*batch))
     images = torch.stack(transposed_batch[0], 0)
@@ -38,6 +39,8 @@ class Trainer(object):
 
         time_str = datetime.strftime(datetime.now(), '%m%d-%H%M%S')
         self.logger = log_utils.get_logger(os.path.join(self.save_dir, 'train-{:s}.log'.format(time_str)))
+        log_utils._init()
+        log_utils.set_value("Logger",self.logger)
         log_utils.print_config(vars(args), self.logger)
 
         if torch.cuda.is_available():
@@ -101,6 +104,9 @@ class Trainer(object):
         self.best_mse = np.inf
         self.best_count = 0
 
+        # discrete map in 64*64
+        # self.gt_encoder = torch.nn.AvgPool2d(kernel_size=self.args.downsample_ratio,stride=self.args.downsample_ratio).to(self.device)
+    
     def train(self):
         """training process"""
         args = self.args
@@ -127,13 +133,14 @@ class Trainer(object):
             inputs = inputs.to(self.device)
             gd_count = np.array([len(p) for p in points], dtype=np.float32)
             points = [p.to(self.device) for p in points]
+            # batch,1,c_size//downsample
             gt_discrete = gt_discrete.to(self.device)
             N = inputs.size(0)
-
             with torch.set_grad_enabled(True):
                 outputs, outputs_normed = self.model(inputs)
+                
                 # Compute OT loss.
-                ot_loss, wd, ot_obj_value = self.ot_loss(outputs_normed, outputs, points)
+                ot_loss, wd, ot_obj_value = self.ot_loss(outputs_normed, outputs, points,gt_discrete)
                 ot_loss = ot_loss * self.args.wot
                 ot_obj_value = ot_obj_value * self.args.wot
                 epoch_ot_loss.update(ot_loss.item(), N)

@@ -6,7 +6,6 @@ Bregman projections for regularized OT (Sinkhorn distance).
 """
 
 import torch
-
 M_EPS = 1e-16
 
 
@@ -141,19 +140,16 @@ def sinkhorn_knopp(a, b, C, reg=1e-1, maxIter=1000, stopThr=1e-9,
     na, nb = C.shape
 
     assert na >= 1 and nb >= 1, 'C needs to be 2d'
-    assert na == a.shape[0] and nb == b.shape[0], "Shape of a or b does't match that of C"
+    assert na == a.shape[0] and nb == b.shape[0], "Shape of a{} or b{} does't match that of C({},{})".format(a.shape[0],b.shape[0],na,nb)
     assert reg > 0, 'reg should be greater than 0'
     assert a.min() >= 0. and b.min() >= 0., 'Elements in a or b less than 0'
 
     if log:
         log = {'err': []}
 
-    if warm_start is not None:
-        u = warm_start['u']
-        v = warm_start['v']
-    else:
-        u = torch.ones(na, dtype=a.dtype).to(device) / na
-        v = torch.ones(nb, dtype=b.dtype).to(device) / nb
+
+    u = torch.ones(na, dtype=a.dtype).to(device) / na
+    v = torch.ones(nb, dtype=b.dtype).to(device) / nb
 
     K = torch.empty(C.shape, dtype=C.dtype).to(device)
     torch.div(C, -reg, out=K)
@@ -167,7 +163,21 @@ def sinkhorn_knopp(a, b, C, reg=1e-1, maxIter=1000, stopThr=1e-9,
     # allocate memory beforehand
     KTu = torch.empty(v.shape, dtype=v.dtype).to(device)
     Kv = torch.empty(u.shape, dtype=u.dtype).to(device)
-
+    if warm_start is not None:
+        v = torch.exp(-warm_start/reg)
+        torch.matmul(K, v, out=Kv)
+        u = torch.div(a, Kv + M_EPS)
+        b_hat = torch.matmul(u, K) * v
+        err = (b - b_hat).pow(2).sum().item()
+        # err = (b - b_hat).abs().sum().item()
+        log['err'].append(err)
+    else:
+        torch.matmul(K, v, out=Kv)
+        u = torch.div(a, Kv + M_EPS)
+        b_hat = torch.matmul(u, K) * v
+        err = (b - b_hat).pow(2).sum().item()
+        # err = (b - b_hat).abs().sum().item()
+        log['err'].append(err)
     while (err > stopThr and it <= maxIter):
         upre, vpre = u, v
         torch.matmul(u, K, out=KTu)
@@ -191,6 +201,7 @@ def sinkhorn_knopp(a, b, C, reg=1e-1, maxIter=1000, stopThr=1e-9,
             err = (b - b_hat).pow(2).sum().item()
             # err = (b - b_hat).abs().sum().item()
             log['err'].append(err)
+           
 
         if verbose and it % print_freq == 0:
             print('iteration {:5d}, constraint error {:5e}'.format(it, err))
@@ -206,9 +217,9 @@ def sinkhorn_knopp(a, b, C, reg=1e-1, maxIter=1000, stopThr=1e-9,
     # transport plan
     P = u.reshape(-1, 1) * K * v.reshape(1, -1)
     if log:
-        return P, log
+        return P.detach(), log
     else:
-        return P
+        return P.detach()
 
 
 def sinkhorn_stabilized(a, b, C, reg=1e-1, maxIter=1000, tau=1e3, stopThr=1e-9,
