@@ -138,9 +138,12 @@ class Trainer(object):
             N = inputs.size(0)
             with torch.set_grad_enabled(True):
                 outputs, outputs_normed = self.model(inputs)
+                gd_count_tensor = torch.from_numpy(gd_count).float().to(self.device).unsqueeze(1).unsqueeze(
+                    2).unsqueeze(3)
+                gt_discrete_normed = gt_discrete / (gd_count_tensor + 1e-6)
                 
                 # Compute OT loss.
-                ot_loss, wd, ot_obj_value = self.ot_loss(outputs_normed, outputs, points,gt_discrete)
+                ot_loss, wd, ot_obj_value = self.ot_loss(outputs_normed, outputs, points,gt_discrete_normed)
                 ot_loss = ot_loss * self.args.wot
                 ot_obj_value = ot_obj_value * self.args.wot
                 epoch_ot_loss.update(ot_loss.item(), N)
@@ -153,9 +156,7 @@ class Trainer(object):
                 epoch_count_loss.update(count_loss.item(), N)
 
                 # Compute TV loss.
-                gd_count_tensor = torch.from_numpy(gd_count).float().to(self.device).unsqueeze(1).unsqueeze(
-                    2).unsqueeze(3)
-                gt_discrete_normed = gt_discrete / (gd_count_tensor + 1e-6)
+                
                 tv_loss = (self.tv_loss(outputs_normed, gt_discrete_normed).sum(1).sum(1).sum(
                     1) * torch.from_numpy(gd_count).float().to(self.device)).mean(0) * self.args.wtv
                 epoch_tv_loss.update(tv_loss.item(), N)

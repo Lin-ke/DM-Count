@@ -164,9 +164,14 @@ def sinkhorn_knopp(a, b, C, reg=1e-1, maxIter=1000, stopThr=1e-9,
     KTu = torch.empty(v.shape, dtype=v.dtype).to(device)
     Kv = torch.empty(u.shape, dtype=u.dtype).to(device)
     if warm_start is not None:
-        v = torch.exp(-warm_start/reg)
+        v = torch.exp(warm_start/reg)
         torch.matmul(K, v, out=Kv)
         u = torch.div(a, Kv + M_EPS)
+        
+        if torch.isnan(u).any() == True :
+            print(a,Kv,u,v)
+            while True:
+                {}
         b_hat = torch.matmul(u, K) * v
         err = (b - b_hat).pow(2).sum().item()
         # err = (b - b_hat).abs().sum().item()

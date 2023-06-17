@@ -66,7 +66,7 @@ class OT_Loss(Module):
                 start_time = time.time()
                 G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))    
                 
-                P, log = sinkhorn(target_prob, source_prob, dis, self.reg,warm_start=torch.tensor(G_pred.squeeze(0),requires_grad=False), maxIter=self.num_of_iter_in_ot, log=True)
+                P, log = sinkhorn(target_prob, source_prob, dis, self.reg,warm_start=G_pred.squeeze(0).detach(), maxIter=self.num_of_iter_in_ot, log=True)
                 end_time = time.time()
                 self.logger.info("emd time with init: {}".format(end_time-start_time))
                 self.logger.info(log['err'][0])
