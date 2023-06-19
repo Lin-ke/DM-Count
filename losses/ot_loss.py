@@ -116,7 +116,7 @@ class OT_Loss(Module):
         g_sink_nan = torch.nan_to_num(g_sink, nan=0.0, posinf=0.0, neginf=0.0)
         f_sink_nan = torch.nan_to_num(f_sink, nan=0.0, posinf=0.0, neginf=0.0)
         dual_obj_left = torch.sum(f_sink_nan * a, dim=-1) + torch.sum(g_sink_nan * b, dim=-1)
-        dual_obj_right = - self.reg*torch.sum(torch.exp(f_sink/self.reg)*(torch.exp(g_sink/self.reg)@(self.K.T)), dim = -1)
+        dual_obj_right = - self.reg*torch.sum(torch.exp(f_sink_nan/self.reg)*(torch.exp(g_sink_nan/self.reg)@(self.K.T)), dim = -1)
         dual_obj = dual_obj_left + dual_obj_right
         return dual_obj, g_sink, f_sink
     def potential_loss(self, a, b, f_pred):
