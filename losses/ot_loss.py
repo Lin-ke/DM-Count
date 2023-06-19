@@ -4,7 +4,6 @@ from models import MLP
 
 from utils.log_utils import get_value
 from .bregman_pytorch import sinkhorn
-
 M_EPS = 1e-16
 class OT_Loss(Module):
     def __init__(self, c_size, stride, norm_cood, device, num_of_iter_in_ot=100, reg=10.0):
@@ -30,7 +29,7 @@ class OT_Loss(Module):
         self.pred_net = MLP(2*shape**2, shape**2).to(self.device) # (input:shape**2(est count) + shape**2(gt count), output:shape(vector a))
         self.pred_optim = torch.optim.Adam(self.pred_net.parameters(), lr = 1e-3)
         self.logger = get_value("Logger")
-        
+        self.predcounter = 0
     def forward(self, normed_density, unnormed_density, points, gt_discrete):
         batch_size = normed_density.size(0)
         assert len(points) == batch_size
@@ -40,7 +39,7 @@ class OT_Loss(Module):
         wd = 0 # wasserstain distance
         for idx, im_points in enumerate(points):
             # else just jump
-            if len(im_points) > 0:
+            if len(im_points) >= 1:
                 # compute l2 square distance, it should be source target distance. [#gt, #cood * #cood]
                 if self.norm_cood:
                     im_points = im_points / self.c_size * 2 - 1 # map to [-1, 1]
@@ -60,34 +59,42 @@ class OT_Loss(Module):
                 # use sinkhorn to solve OT, compute optimal beta.
                 # *warm start: f_pred
                 
-                # 推理+训练
                 
                 source_prob_ = source_prob.unsqueeze(0)
+                
+                # 优化
                 start_time = time.time()
-                G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))    
+                if self.predcounter % 3 == 0:
+                    for j in range(1):
+                        G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))
+                        pred_loss = self.potential_loss(a =source_prob,b = target_prob, f_pred = G_pred)
+                        self.pred_optim.zero_grad()
+                        pred_loss.backward()
+                        self.pred_optim.step()
+
+                self.predcounter += 1    
+                end_time = time.time()
+                self.logger.info("optmize time: {}".format(end_time-start_time))
+                
+                
+                # 推理 + 计算
+                start_time = time.time()
+                G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))
                 
                 P, log = sinkhorn(target_prob, source_prob, dis, self.reg,warm_start=G_pred.squeeze(0).detach(), maxIter=self.num_of_iter_in_ot, log=True)
                 end_time = time.time()
                 self.logger.info("emd time with init: {}".format(end_time-start_time))
                 self.logger.info(log['err'][0])
+                self.logger.info(log['it'])
                 
-                start_time = time.time()
-                for j in range(1):
-                    if j != 0:
-                        G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))
-                    pred_loss = self.potential_loss(a =source_prob,b = target_prob, f_pred = G_pred)
-                    self.pred_optim.zero_grad()
-                    pred_loss.backward()
-                    self.pred_optim.step()
-                    
-                end_time = time.time()
-                self.logger.info("optmize time: {}".format(end_time-start_time))
+                
                 # 直接Sinkhorn
                 start_time = time.time()
                 P, log = sinkhorn(target_prob, source_prob, dis, self.reg,warm_start=None, maxIter=self.num_of_iter_in_ot, log=True)
                 end_time = time.time()
                 self.logger.info("emd time without init: {}".format(end_time-start_time))
                 self.logger.info(log['err'][0])
+                self.logger.info(log['it'])
                 
                 beta = log['beta'] # size is the same as source_prob: [#cood * #cood]
                 ot_obj_values += torch.sum(normed_density[idx] * beta.view([1, self.output_size, self.output_size]))
@@ -106,17 +113,17 @@ class OT_Loss(Module):
         return loss, wd, ot_obj_values
 
     def update(self, a, b, f):
-        g_uot = self.reg*(torch.log(torch.div(b,torch.exp(f/self.reg)@(self.K)+M_EPS)))
-        f_uot = self.reg*(torch.log(torch.div(a,torch.exp(g_uot/self.reg)@(self.K.T) + M_EPS)))
+        g_uot = self.reg*(torch.log(b) - torch.log(torch.exp(f/self.reg)@(self.K) + M_EPS))
+        f_uot = self.reg*(torch.log(a) - torch.log(torch.exp(g_uot/self.reg)@(self.K.T)+M_EPS))
         return g_uot, f_uot   
     def dual_obj_from_f(self, a, b, f):
         g_sink, f_sink = self.update(a, b, f)
         if torch.any(torch.isnan(g_sink)) or torch.any(torch.isnan(f_sink)):
             print('Warning: numerical errors')
-        g_sink_nan = torch.nan_to_num(g_sink, nan=0.0, posinf=0.0, neginf=0.0)
-        f_sink_nan = torch.nan_to_num(f_sink, nan=0.0, posinf=0.0, neginf=0.0)
-        dual_obj_left = torch.sum(f_sink_nan * a, dim=-1) + torch.sum(g_sink_nan * b, dim=-1)
-        dual_obj_right = - self.reg*torch.sum(torch.exp(f_sink_nan/self.reg)*(torch.exp(g_sink_nan/self.reg)@(self.K.T)), dim = -1)
+        # g_sink_nan = torch.nan_to_num(g_sink, nan=0.0, posinf=0.0, neginf=0.0)
+        # f_sink_nan = torch.nan_to_num(f_sink, nan=0.0, posinf=0.0, neginf=0.0)
+        dual_obj_left = torch.sum(f_sink * a, dim=-1) + torch.sum(g_sink * b, dim=-1)
+        dual_obj_right = - self.reg*torch.sum(torch.exp(f_sink/self.reg)*(torch.exp(g_sink/self.reg)@(self.K.T)), dim = -1)
         dual_obj = dual_obj_left + dual_obj_right
         return dual_obj, g_sink, f_sink
     def potential_loss(self, a, b, f_pred):

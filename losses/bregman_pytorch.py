@@ -10,7 +10,7 @@ M_EPS = 1e-16
 
 
 def sinkhorn(a, b, C, reg=1e-1, method='sinkhorn', maxIter=1000, tau=1e3,
-             stopThr=1e-9, verbose=False, log=True, warm_start=None, eval_freq=10, print_freq=200, **kwargs):
+             stopThr=1e-4, verbose=False, log=True, warm_start=None, eval_freq=10, print_freq=200, **kwargs):
     """
     Solve the entropic regularization optimal transport
     The input should be PyTorch tensors
@@ -169,7 +169,7 @@ def sinkhorn_knopp(a, b, C, reg=1e-1, maxIter=1000, stopThr=1e-9,
         u = torch.div(a, Kv + M_EPS)
         
         if torch.isnan(u).any() == True :
-            print(a,Kv,u,v)
+            print(a,K,Kv,u,v)
             while True:
                 {}
         b_hat = torch.matmul(u, K) * v
@@ -212,12 +212,13 @@ def sinkhorn_knopp(a, b, C, reg=1e-1, maxIter=1000, stopThr=1e-9,
             print('iteration {:5d}, constraint error {:5e}'.format(it, err))
 
         it += 1
-
+    
     if log:
         log['u'] = u
         log['v'] = v
         log['alpha'] = reg * torch.log(u + M_EPS)
         log['beta'] = reg * torch.log(v + M_EPS)
+        log['it'] = it
 
     # transport plan
     P = u.reshape(-1, 1) * K * v.reshape(1, -1)
