@@ -30,6 +30,7 @@ class OT_Loss(Module):
         self.pred_optim = torch.optim.Adam(self.pred_net.parameters(), lr = 1e-3)
         self.logger = get_value("Logger")
         self.predcounter = 0
+        self.schedualcounter = 0
     def forward(self, normed_density, unnormed_density, points, gt_discrete):
         batch_size = normed_density.size(0)
         assert len(points) == batch_size
@@ -40,6 +41,7 @@ class OT_Loss(Module):
         for idx, im_points in enumerate(points):
             # else just jump
             if len(im_points) >= 1:
+                self.schedualcounter += 1
                 # compute l2 square distance, it should be source target distance. [#gt, #cood * #cood]
                 if self.norm_cood:
                     im_points = im_points / self.c_size * 2 - 1 # map to [-1, 1]
@@ -68,36 +70,45 @@ class OT_Loss(Module):
                     for j in range(1):
                         G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))
                         pred_loss = self.potential_loss(a =source_prob,b = target_prob, f_pred = G_pred)
-                        self.pred_optim.zero_grad()
-                        pred_loss.backward()
-                        self.pred_optim.step()
+                        if pred_loss: # nan时跳过
+                            self.pred_optim.zero_grad()
+                            pred_loss.backward()
+                            self.pred_optim.step()
 
                 self.predcounter += 1    
                 end_time = time.time()
-                self.logger.info("optmize time: {}".format(end_time-start_time))
+                # self.logger.info("optmize time: {}".format(end_time-start_time))
                 
                 
                 # 推理 + 计算
-                start_time = time.time()
-                G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))
-                
-                P, log = sinkhorn(target_prob, source_prob, dis, self.reg,warm_start=G_pred.squeeze(0).detach(), maxIter=self.num_of_iter_in_ot, log=True)
-                end_time = time.time()
-                self.logger.info("emd time with init: {}".format(end_time-start_time))
-                self.logger.info(log['err'][0])
-                self.logger.info(log['it'])
+                switch = self.schedualcounter > 300
+                if self.schedualcounter == 300:
+                    self.logger.info("start using init")
+                if switch:
+                    start_time = time.time()
+                    G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))
+                    
+                    P, log = sinkhorn(target_prob, source_prob, dis, self.reg,warm_start=G_pred.squeeze(0).detach(), maxIter=self.num_of_iter_in_ot, log=True)
+                    end_time = time.time()
+                    # self.logger.info("emd time with init: {}".format(end_time-start_time))
+                    # self.logger.info(log['err'][0])
+                    # self.logger.info(log['it'])
                 
                 
                 # 直接Sinkhorn
-                start_time = time.time()
-                P, log = sinkhorn(target_prob, source_prob, dis, self.reg,warm_start=None, maxIter=self.num_of_iter_in_ot, log=True)
-                end_time = time.time()
-                self.logger.info("emd time without init: {}".format(end_time-start_time))
-                self.logger.info(log['err'][0])
-                self.logger.info(log['it'])
+                else:
+                    start_time = time.time()
+                    P, log = sinkhorn(target_prob, source_prob, dis, self.reg,warm_start=None, maxIter=self.num_of_iter_in_ot, log=True)
+                    end_time = time.time()
+                    # self.logger.info("emd time without init: {}".format(end_time-start_time))
+                    # self.logger.info(log['err'][0])
+                    # self.logger.info(log['it'])
                 
                 beta = log['beta'] # size is the same as source_prob: [#cood * #cood]
+                #beta = G_pred.squeeze(0).detach()
                 ot_obj_values += torch.sum(normed_density[idx] * beta.view([1, self.output_size, self.output_size]))
+                self.logger.info(log['err'][0])
+                self.logger.info(log['err'][-1])
                 # compute the gradient of OT loss to predicted density (unnormed_density).
                 # im_grad = beta / source_count - < beta, source_density> / (source_count)^2
                 source_density = unnormed_density[idx][0].view([-1]).detach()
@@ -114,21 +125,27 @@ class OT_Loss(Module):
 
     def update(self, a, b, f):
         g_uot = self.reg*(torch.log(b) - torch.log(torch.exp(f/self.reg)@(self.K) + M_EPS))
-        f_uot = self.reg*(torch.log(a) - torch.log(torch.exp(g_uot/self.reg)@(self.K.T)+M_EPS))
-        return g_uot, f_uot   
+        # use f_uot may cause unstable training
+        f = self.reg*(torch.log(a) - torch.log(torch.exp(g_uot/self.reg)@(self.K.T)+M_EPS))
+        
+        return g_uot, f
     def dual_obj_from_f(self, a, b, f):
         g_sink, f_sink = self.update(a, b, f)
         if torch.any(torch.isnan(g_sink)) or torch.any(torch.isnan(f_sink)):
-            print('Warning: numerical errors')
-        # g_sink_nan = torch.nan_to_num(g_sink, nan=0.0, posinf=0.0, neginf=0.0)
-        # f_sink_nan = torch.nan_to_num(f_sink, nan=0.0, posinf=0.0, neginf=0.0)
+            self.logger.info("numerical error nan")
+            return None,None,None
+    
+        g_sink = torch.nan_to_num(g_sink, nan=0.0, posinf=0.0, neginf=0.0)
+        f_sink = torch.nan_to_num(f_sink, nan=0.0, posinf=0.0, neginf=0.0)
         dual_obj_left = torch.sum(f_sink * a, dim=-1) + torch.sum(g_sink * b, dim=-1)
         dual_obj_right = - self.reg*torch.sum(torch.exp(f_sink/self.reg)*(torch.exp(g_sink/self.reg)@(self.K.T)), dim = -1)
         dual_obj = dual_obj_left + dual_obj_right
         return dual_obj, g_sink, f_sink
     def potential_loss(self, a, b, f_pred):
         dual_value,g_s,f_s = self.dual_obj_from_f(a+M_EPS, b+M_EPS, f_pred)
-        gradg = b - torch.exp(g_s/self.reg)*(torch.exp(f_s/self.reg)@(self.K))
-        norm2 = torch.norm(gradg,dim = 1,keepdim=True).mean()
-        loss =  - torch.mean(dual_value) + norm2
+        if dual_value is None:
+            return None
+        # gradg = b - torch.exp(g_s/self.reg)*(torch.exp(f_s/self.reg)@(self.K))
+        # norm2 = torch.norm(gradg,dim = 1,keepdim=True).mean()
+        loss =  - torch.mean(dual_value)
         return loss
