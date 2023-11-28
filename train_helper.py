@@ -11,7 +11,8 @@ from datetime import datetime
 from datasets.crowd import Crowd_qnrf, Crowd_nwpu, Crowd_sh
 from models import vgg19,MLP
 
-from losses.ot_loss import OT_Loss
+# from losses.ot_loss import OT_Loss
+from losses.ot_loss_gaus import OT_Loss
 from utils.pytorch_utils import Save_Handle, AverageMeter
 import utils.log_utils as log_utils
 
@@ -30,17 +31,21 @@ class Trainer(object):
 
     def setup(self):
         args = self.args
-        sub_dir = 'input-{}_wot-{}_wtv-{}_reg-{}_nIter-{}_normCood-{}'.format(
-            args.crop_size, args.wot, args.wtv, args.reg, args.num_of_iter_in_ot, args.norm_cood)
+        time_str = datetime.strftime(datetime.now(), '%m%d-%H%M%S')
+        
+        sub_dir = time_str
 
         self.save_dir = os.path.join('ckpts', sub_dir)
         if not os.path.exists(self.save_dir):
             os.makedirs(self.save_dir)
 
-        time_str = datetime.strftime(datetime.now(), '%m%d-%H%M%S')
         self.logger = log_utils.get_logger(os.path.join(self.save_dir, 'train-{:s}.log'.format(time_str)))
+        self.time_str = time_str
         log_utils._init()
         log_utils.set_value("Logger",self.logger)
+        log_utils.set_value("time_str", time_str)
+        log_utils.set_value("save_dir", self.save_dir)
+        log_utils.set_value("arg", self.args)
         log_utils.print_config(vars(args), self.logger)
 
         if torch.cuda.is_available():
@@ -114,8 +119,19 @@ class Trainer(object):
             self.logger.info('-' * 5 + 'Epoch {}/{}'.format(epoch, args.max_epoch) + '-' * 5)
             self.epoch = epoch
             self.train_eopch()
-            if epoch % args.val_epoch == 0 and epoch >= args.val_start:
-                self.val_epoch()
+            # if epoch % args.val_epoch == 0 and epoch >= args.val_start:
+            #     self.val_epoch()
+            if epoch == int(args.max_epoch/2):
+                torch.save({
+            'epoch': epoch,
+            'model_state_dict': self.ot_loss.pred_net.state_dict(),
+            'optimizer_state_dict': self.ot_loss.pred_optim.state_dict(),
+            }, './pred_saved/pred_net{}.pth'.format(self.time_str))
+        torch.save({
+            'epoch': args.max_epoch,
+            'model_state_dict': self.ot_loss.pred_net.state_dict(),
+            'optimizer_state_dict': self.ot_loss.pred_optim.state_dict(),
+            }, './pred_saved/pred_net{}.pth'.format(self.time_str))
 
     def train_eopch(self):
         epoch_ot_loss = AverageMeter()

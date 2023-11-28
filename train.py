@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument('--num-of-iter-in-ot', type=int, default=100,
                         help='sinkhorn iterations')
     parser.add_argument('--norm-cood', type=int, default=0, help='whether to norm cood when computing distance')
-
+    
     args = parser.parse_args()
 
     if args.dataset.lower() == 'qnrf':

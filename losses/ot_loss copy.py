@@ -36,7 +36,6 @@ class OT_Loss(Module):
         assert len(points) == batch_size
         assert self.output_size == normed_density.size(2)
         loss = torch.zeros([1]).to(self.device)
-        dual_loss = torch.zeros([1]).to(self.device)
         ot_obj_values = torch.zeros([1]).to(self.device)
         wd = 0 # wasserstain distance
         for idx, im_points in enumerate(points):
@@ -65,23 +64,27 @@ class OT_Loss(Module):
                 
                 source_prob_ = source_prob.unsqueeze(0)
                 
-                # Add, 并不优化
-                start_time = time.time()
-                G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))
-                pred_loss = self.potential_loss(a =source_prob,b = target_prob, f_pred = G_pred)
-                if pred_loss: # nan时跳过
-                    dual_loss += pred_loss
+                                # 优化
+                if self.schedualcounter < 1e10:
+                    start_time = time.time()
+                    if self.predcounter % 1 == 0:
+                        for j in range(1):
+                            G_pred = self.pred_net(source_prob_,gt_discrete[idx].reshape(1,-1))
+                            pred_loss = self.potential_loss(a =source_prob,b = target_prob, f_pred = G_pred)
+                            if pred_loss: # nan时跳过
+                                self.pred_optim.zero_grad()
+                                pred_loss.backward()
+                                self.pred_optim.step()
+                            else: break;
 
                 self.predcounter += 1    
                 end_time = time.time()
                 # self.logger.info("optmize time: {}".format(end_time-start_time))
                 
-
-
                 # 测试不使用sinkhorn，优化5次,用switch切换
                 # 测试不使用sinkhorn，加损失
                 # 推理 + 计算
-                start_use_init = 300
+                start_use_init = 10000
                 switch = self.schedualcounter > start_use_init
                 if self.schedualcounter == start_use_init:
                     self.logger.info("start using init")
@@ -107,7 +110,8 @@ class OT_Loss(Module):
                     # self.logger.info(log['it'])
                     beta = log['beta'] # size is the same as source_prob: [#cood * #cood]
                 ot_obj_values += torch.sum(normed_density[idx] * beta.view([1, self.output_size, self.output_size]))
-                self.logger.info(log['err'])
+                self.logger.info(log['err'][0])
+                self.logger.info(log['err'][-1])
                 # compute the gradient of OT loss to predicted density (unnormed_density).
                 # im_grad = beta / source_count - < beta, source_density> / (source_count)^2
                 source_density = unnormed_density[idx][0].view([-1]).detach()
@@ -120,24 +124,20 @@ class OT_Loss(Module):
                 loss += torch.sum(unnormed_density[idx] * im_grad)
                 wd += torch.sum(dis * P).item()
 
-        self.pred_optim.zero_grad()
-        dual_loss.backward()
-        self.pred_optim.step()
         return loss, wd, ot_obj_values
 
     def update(self, a, b, f):
         g_uot = self.reg*(torch.log(b) - torch.log(torch.exp(f/self.reg)@(self.K) + M_EPS))
         # use f_uot may cause unstable training
         f = self.reg*(torch.log(a) - torch.log(torch.exp(g_uot/self.reg)@(self.K.T)+M_EPS))
+        
         return g_uot, f
     def dual_obj_from_f(self, a, b, f):
         g_sink, f_sink = self.update(a, b, f)
         if torch.any(torch.isnan(g_sink)) or torch.any(torch.isnan(f_sink)):
             self.logger.info("numerical error nan")
             return None,None,None
-        if torch.any(torch.isinf(g_sink)) or torch.any(torch.isinf(f_sink)):
-                self.logger.info("numerical error nan")
-                return None,None,None
+    
         g_sink = torch.nan_to_num(g_sink, nan=0.0, posinf=0.0, neginf=0.0)
         f_sink = torch.nan_to_num(f_sink, nan=0.0, posinf=0.0, neginf=0.0)
         dual_obj_left = torch.sum(f_sink * a, dim=-1) + torch.sum(g_sink * b, dim=-1)

@@ -57,7 +57,7 @@ def vgg19():
     return model
 import torch
 class MLP(nn.Module):
-    def __init__(self, dim_in, dim_out, hidden_num = 3, hidden_dim = 1024):
+    def __init__(self, dim_in, dim_out, hidden_num = 4, hidden_dim = 1024):
         super().__init__()
         self.model_base = nn.ModuleList([
             nn.ModuleList([nn.Linear(dim_in, hidden_dim, dtype=torch.float32) if i == 0 else nn.Linear(hidden_dim, hidden_dim, dtype=torch.float32),
