@@ -1,8 +1,12 @@
 ckpts/
+ckpt/
+pred_saved/
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
+generated/
+
 
 # C extensions
 *.so

@@ -8,11 +8,12 @@ from torch.utils.data.dataloader import default_collate
 import numpy as np
 from datetime import datetime
 
-from datasets.crowd import Crowd_qnrf, Crowd_nwpu, Crowd_sh
+from datasets.crowd_withname import Crowd_qnrf, Crowd_nwpu, Crowd_sh
 from models import vgg19,MLP
 
 # from losses.ot_loss import OT_Loss
-from losses.ot_loss_gaus import OT_Loss
+# from losses.ot_loss_gaus import OT_Loss
+from losses.ot_loss_no import OT_Loss
 from utils.pytorch_utils import Save_Handle, AverageMeter
 import utils.log_utils as log_utils
 
@@ -22,7 +23,7 @@ def train_collate(batch):
     images = torch.stack(transposed_batch[0], 0)
     points = transposed_batch[1]  # the number of points is not fixed, keep it as a list of tensor
     gt_discretes = torch.stack(transposed_batch[2], 0)
-    return images, points, gt_discretes
+    return images, points, gt_discretes, transposed_batch[3]
 
 
 class Trainer(object):
@@ -118,21 +119,8 @@ class Trainer(object):
         for epoch in range(self.start_epoch, args.max_epoch + 1):
             self.logger.info('-' * 5 + 'Epoch {}/{}'.format(epoch, args.max_epoch) + '-' * 5)
             self.epoch = epoch
+            log_utils.set_value("epoch", self.epoch)
             self.train_eopch()
-            # if epoch % args.val_epoch == 0 and epoch >= args.val_start:
-            #     self.val_epoch()
-            if epoch == int(args.max_epoch/2):
-                torch.save({
-            'epoch': epoch,
-            'model_state_dict': self.ot_loss.pred_net.state_dict(),
-            'optimizer_state_dict': self.ot_loss.pred_optim.state_dict(),
-            }, './pred_saved/pred_net{}.pth'.format(self.time_str))
-        torch.save({
-            'epoch': args.max_epoch,
-            'model_state_dict': self.ot_loss.pred_net.state_dict(),
-            'optimizer_state_dict': self.ot_loss.pred_optim.state_dict(),
-            }, './pred_saved/pred_net{}.pth'.format(self.time_str))
-
     def train_eopch(self):
         epoch_ot_loss = AverageMeter()
         epoch_ot_obj_value = AverageMeter()
@@ -145,7 +133,7 @@ class Trainer(object):
         epoch_start = time.time()
         self.model.train()  # Set model to training mode
 
-        for step, (inputs, points, gt_discrete) in enumerate(self.dataloaders['train']):
+        for step, (inputs, points, gt_discrete, names) in enumerate(self.dataloaders['train']):
             inputs = inputs.to(self.device)
             gd_count = np.array([len(p) for p in points], dtype=np.float32)
             points = [p.to(self.device) for p in points]
@@ -159,7 +147,7 @@ class Trainer(object):
                 gt_discrete_normed = gt_discrete / (gd_count_tensor + 1e-6)
                 
                 # Compute OT loss.
-                ot_loss, wd, ot_obj_value = self.ot_loss(outputs_normed, outputs, points,gt_discrete_normed)
+                ot_loss, wd, ot_obj_value = self.ot_loss(outputs_normed, outputs, points,gt_discrete_normed, names)
                 ot_loss = ot_loss * self.args.wot
                 ot_obj_value = ot_obj_value * self.args.wot
                 epoch_ot_loss.update(ot_loss.item(), N)

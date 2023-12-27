@@ -122,6 +122,7 @@ class Crowd_qnrf(Base):
         if self.method == 'train':
             keypoints = np.load(gd_path)
             return self.train_transform(img, keypoints)
+        
         elif self.method == 'val':
             keypoints = np.load(gd_path)
             img = self.trans(img)
